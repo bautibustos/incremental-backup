@@ -1,10 +1,10 @@
 [
     {
-        "origen":"//d250isinfs01\\qgis031\\",
+        "origen":"//d250isinfs01\\qgis031\\TECNICA_INFRA\\00-CAPAS BASE",
         "destino":""
     },
     {
-        "origen":"\\d250isinfs01\\qgis031",
+        "origen":"\\\\d250isinfs01\\qgis031\\TECNICA_INFRA\\01-CAMBIOS DE RED",
         "destino":""
     }
 
