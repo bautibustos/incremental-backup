@@ -1,0 +1,115 @@
+import sqlite3
+import os
+import time # Para simular fechas de modificación
+
+# --- Configuración de la base de datos ---
+DB_NAME = "backup_metadata.db"
+TABLE_NAME = "archivos_respaldados"
+
+def crear_conexion():
+    """
+    Crea y retorna una conexión a la base de datos SQLite.
+    Pregunta al usuario si desea sobrescribir la BD si ya existe.
+    """
+    if os.path.exists(DB_NAME):
+        while True:
+            respuesta = input(f"La base de datos '{DB_NAME}' ya existe. ¿Desea sobrescribirla? (s/n): ").lower()
+            if respuesta == 's':
+                os.remove(DB_NAME)
+                print(f"Base de datos '{DB_NAME}' existente eliminada.")
+                break
+            elif respuesta == 'n':
+                print(f"Usando la base de datos existente '{DB_NAME}'.")
+                break
+            else:
+                print("Respuesta no válida. Por favor, ingrese 's' o 'n'.")
+
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        return conn
+    except sqlite3.Error as e:
+        print(f"Error al conectar a la base de datos: {e}")
+        return None
+
+def crear_tabla(conn):
+    """Crea la tabla de archivos_respaldados si no existe."""
+    try:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
+                ID INTEGER PRIMARY KEY AUTOINCREMENT,
+                UBICACION TEXT UNIQUE NOT NULL,
+                FECHA_MOD REAL NOT NULL, -- Usaremos un timestamp (número real)
+                PESO INTEGER NOT NULL,  -- Tamaño del archivo en bytes
+                HASH TEXT NOT NULL      -- Hash SHA256 del archivo
+            );
+        """)
+        conn.commit()
+        print(f"Tabla '{TABLE_NAME}' creada o ya existente.")
+    except sqlite3.Error as e:
+        print(f"Error al crear la tabla: {e}")
+
+def insertar_o_actualizar_archivo(conn, ubicacion, fecha_mod, peso, hash_valor):
+    """
+    Inserta un nuevo registro o actualiza uno existente si la UBICACION ya existe.
+    """
+    try:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            INSERT INTO {TABLE_NAME} (UBICACION, FECHA_MOD, PESO, HASH)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(UBICACION) DO UPDATE SET
+                FECHA_MOD = EXCLUDED.FECHA_MOD,
+                PESO = EXCLUDED.PESO,
+                HASH = EXCLUDED.HASH;
+        """, (ubicacion, fecha_mod, peso, hash_valor))
+        conn.commit()
+        print(f"Archivo '{ubicacion}' guardado/actualizado correctamente.")
+    except sqlite3.Error as e:
+        print(f"Error al guardar/actualizar archivo '{ubicacion}': {e}")
+
+# --- Secuencia de uso ---
+if __name__ == "__main__":
+    # 1. Crear o conectar a la base de datos (con pregunta si existe)
+    conn = crear_conexion()
+    if conn:
+        # 2. Crear la tabla
+        crear_tabla(conn)
+
+        # 3. Demostración de la función de insertar/actualizar
+        print("\n--- Demostración de inserción/actualización de datos ---")
+
+        # Primer insert: un nuevo archivo
+        ubicacion_ejemplo_1 = "/ruta/del/archivo/documento_importante.txt"
+        fecha_mod_ejemplo_1 = time.time()
+        peso_ejemplo_1 = 12345
+        hash_ejemplo_1 = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+        insertar_o_actualizar_archivo(conn, ubicacion_ejemplo_1, fecha_mod_ejemplo_1, peso_ejemplo_1, hash_ejemplo_1)
+
+        # Segundo insert: otro nuevo archivo
+        ubicacion_ejemplo_2 = "/otra/ubicacion/imagen_vacaciones.jpg"
+        fecha_mod_ejemplo_2 = time.time() - 86400 # Un día antes
+        peso_ejemplo_2 = 543210
+        hash_ejemplo_2 = "0987654321fedcba0987654321fedcba0987654321fedcba0987654321fedcba"
+        insertar_o_actualizar_archivo(conn, ubicacion_ejemplo_2, fecha_mod_ejemplo_2, peso_ejemplo_2, hash_ejemplo_2)
+
+        # Actualizar el primer archivo (simulando una modificación)
+        print("\n--- Simulando modificación del primer archivo ---")
+        fecha_mod_ejemplo_1_nueva = time.time()
+        peso_ejemplo_1_nuevo = 12350 # Pequeño cambio de peso
+        hash_ejemplo_1_nuevo = "112233445566778899aabbccddeeff00112233445566778899aabbccddeeff00" # Hash diferente
+        insertar_o_actualizar_archivo(conn, ubicacion_ejemplo_1, fecha_mod_ejemplo_1_nueva, peso_ejemplo_1_nuevo, hash_ejemplo_1_nuevo)
+
+        # Opcional: Verificar los datos en la tabla (puedes añadir una función para listar)
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT UBICACION, FECHA_MOD, PESO, HASH FROM {TABLE_NAME};")
+        print("\n--- Contenido actual de la tabla ---")
+        for row in cursor.fetchall():
+            print(f"Ubicación: {row[0]}, Fecha Mod: {row[1]}, Peso: {row[2]}, Hash: {row[3]}")
+
+
+        # 4. Cerrar la conexión
+        conn.close()
+        print(f"\nConexión a '{DB_NAME}' cerrada.")
+    else:
+        print("No se pudo establecer la conexión a la base de datos.")

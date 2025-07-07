@@ -1,7 +1,6 @@
 import os
 import json
 import logging
-import hashlib
 
 def listar_contenido_recursivo(ruta_base):
     """
@@ -73,6 +72,7 @@ if __name__ == "__main__":
     medir_tiempo(listar_contenido_recursivo,"R:\\")
     
     print("\n -- Registro de carpetas y archivos ---")
+
 """    if archivos_encontrados:
         for archivo in archivos_encontrados:
             print(f"- {archivo}")
