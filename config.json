@@ -1,6 +1,7 @@
 [
     {
         "origen":"//d250isinfs01\\qgis031\\TECNICA_INFRA",
-        "destino":""
+        "destino":"d:\\",
+        "nombre_zip_base":"Test"
     }
 ]
