@@ -1,8 +1,6 @@
 import os
 import json
 import logging
-import hashlib
-import sqlite3
 import time
 
 # --- Configuración de Logging ---
@@ -16,69 +14,43 @@ logging.basicConfig(
     ]
 )
 
-# --- Configuración de la base de datos ---
-DB_NAME = "backup_metadata.db"
-TABLE_NAME = "archivos_respaldados"
+# --- Archivo para la última fecha de backup ---
+LAST_BACKUP_DATE_FILE = "last_backup_date.txt"
 
-def crear_conexion():
+def leer_ultima_fecha_backup():
     """
-    Crea y retorna una conexión a la base de datos SQLite.
-    La crea si no existe, o se conecta a la existente.
+    Lee el timestamp de la última fecha de backup desde un archivo.
+    Retorna 0.0 si el archivo no existe o está vacío.
     """
+    if not os.path.exists(LAST_BACKUP_DATE_FILE):
+        logging.info(f"Log de fecha: Archivo '{LAST_BACKUP_DATE_FILE}' no encontrado. Asumiendo backup inicial.")
+        return 0.0 # Retorna 0.0 para considerar todos los archivos como nuevos
     try:
-        conn = sqlite3.connect(DB_NAME)
-        logging.info(f"Conexión a la base de datos '{DB_NAME}' establecida.")
-        return conn
-    except sqlite3.Error as e:
-        logging.error(f"Error al conectar a la base de datos '{DB_NAME}': {e}")
-        return None
+        with open(LAST_BACKUP_DATE_FILE, "r") as f:
+            timestamp_str = f.read().strip()
+            if timestamp_str:
+                return float(timestamp_str)
+            else:
+                logging.info(f"Log de fecha: Archivo '{LAST_BACKUP_DATE_FILE}' vacío. Asumiendo backup inicial.")
+                return 0.0
+    except ValueError as e:
+        logging.error(f"Log de fecha: Error al leer timestamp de '{LAST_BACKUP_DATE_FILE}': {e}. Asumiendo backup inicial.")
+        return 0.0
+    except Exception as e:
+        logging.error(f"Log de fecha: Error inesperado al leer '{LAST_BACKUP_DATE_FILE}': {e}. Asumiendo backup inicial.")
+        return 0.0
 
-def crear_tabla(conn):
-    """Crea la tabla de archivos_respaldados si no existe."""
-    try:
-        cursor = conn.cursor()
-        cursor.execute(f"""
-            CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
-                ID INTEGER PRIMARY KEY AUTOINCREMENT,
-                UBICACION TEXT UNIQUE NOT NULL,
-                FECHA_MOD REAL NOT NULL, -- Usaremos un timestamp (número real)
-                PESO INTEGER NOT NULL,  -- Tamaño del archivo en bytes
-                HASH TEXT NOT NULL      -- Hash SHA256 del archivo
-            );
-        """)
-        conn.commit()
-        logging.info(f"Tabla '{TABLE_NAME}' creada o ya existente.")
-    except sqlite3.Error as e:
-        logging.error(f"Error al crear la tabla '{TABLE_NAME}': {e}")
-
-def insertar_o_actualizar_archivo(conn, ubicacion, fecha_mod, peso, hash_valor):
+def escribir_ultima_fecha_backup(timestamp):
     """
-    Inserta un nuevo registro o actualiza uno existente si la UBICACION ya existe.
+    Escribe el timestamp de la última fecha de backup en un archivo.
     """
     try:
-        cursor = conn.cursor()
-        cursor.execute(f"""
-            INSERT INTO {TABLE_NAME} (UBICACION, FECHA_MOD, PESO, HASH)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(UBICACION) DO UPDATE SET
-                FECHA_MOD = EXCLUDED.FECHA_MOD,
-                PESO = EXCLUDED.PESO,
-                HASH = EXCLUDED.HASH;
-        """, (ubicacion, fecha_mod, peso, hash_valor))
-        conn.commit()
-        logging.info(f"DB: Archivo '{ubicacion}' guardado/actualizado correctamente.")
-    except sqlite3.Error as e:
-        logging.error(f"DB: Error al guardar/actualizar archivo '{ubicacion}': {e}")
+        with open(LAST_BACKUP_DATE_FILE, "w") as f:
+            f.write(str(timestamp))
+        logging.info(f"Log de fecha: Última fecha de backup ({timestamp}) escrita en '{LAST_BACKUP_DATE_FILE}'.")
+    except Exception as e:
+        logging.error(f"Log de fecha: Error al escribir en '{LAST_BACKUP_DATE_FILE}': {e}")
 
-def obtener_info_archivo(conn, ubicacion):
-    """Obtiene la información de un archivo de la base de datos por su UBICACION."""
-    try:
-        cursor = conn.cursor()
-        cursor.execute(f"SELECT UBICACION, FECHA_MOD, PESO, HASH FROM {TABLE_NAME} WHERE UBICACION = ?;", (ubicacion,))
-        return cursor.fetchone() # Retorna una tupla o None si no se encuentra
-    except sqlite3.Error as e:
-        logging.error(f"DB: Error al obtener información del archivo '{ubicacion}': {e}")
-        return None
 
 def listar_contenido_recursivo(ruta_base):
     """
@@ -93,10 +65,10 @@ def listar_contenido_recursivo(ruta_base):
                - lista_archivos (list): Lista de rutas completas de todos los archivos.
                - lista_carpetas_vacias (list): Lista de rutas completas de las carpetas vacías.
     """
+    logging.info(f"FS: Iniciando listado recursivo en '{ruta_base}'.")
     lista_archivos = []
     lista_carpetas_vacias = []
 
-    logging.info(f"FS: Iniciando listado recursivo en '{ruta_base}'.")
     if not os.path.isdir(ruta_base):
         logging.error(f"FS: Error: La ruta '{ruta_base}' no es un directorio válido o no existe.")
         return [], []
@@ -112,95 +84,36 @@ def listar_contenido_recursivo(ruta_base):
     logging.info(f"FS: Listado recursivo en '{ruta_base}' completado. Encontrados {len(lista_archivos)} archivos.")
     return lista_archivos, lista_carpetas_vacias
 
-def generar_hash_archivo(ruta_archivo, chunk_size=4096):
+# --- Función principal de Backup Incremental (simplificada) ---
+def ejecutar_backup_incremental(origen_path, last_backup_timestamp):
     """
-    Genera un hash SHA256 del contenido de un archivo.
-    Lee el archivo en bloques para manejar archivos grandes eficientemente.
-
-    Args:
-        ruta_archivo (str): La ruta del archivo al que se le calculará el hash.
-        chunk_size (int): Tamaño de los bloques a leer del archivo (en bytes).
-
-    Returns:
-        str: El hash hexadecimal del contenido del archivo, o None si hay un error.
+    Ejecuta el proceso de backup incremental para una ruta de origen dada,
+    basado en la fecha de la última ejecución.
     """
-    hasher = hashlib.sha256()
-    
-    try:
-        with open(ruta_archivo, 'rb') as f: # Abrir en modo binario de lectura
-            while True:
-                chunk = f.read(chunk_size)
-                if not chunk:
-                    break # Fin del archivo
-                hasher.update(chunk)
-        return hasher.hexdigest()
-    except IOError as e:
-        logging.error(f"HASH: Error de lectura del archivo '{ruta_archivo}': {e}")
-        return None
-    except Exception as e:
-        logging.error(f"HASH: Error inesperado al calcular hash de '{ruta_archivo}': {e}")
-        return None
-
-# --- Función principal de Backup Incremental ---
-def ejecutar_backup_incremental(conn, origen_path):
-    """
-    Ejecuta el proceso de backup incremental para una ruta de origen dada.
-    """
+    start_time = time.time() # Registrar el tiempo de inicio
     logging.info(f"PROCESO: Iniciando backup incremental para el origen: '{origen_path}'")
     
     archivos_en_origen, _ = listar_contenido_recursivo(origen_path)
+    
     archivos_modificados_o_nuevos = 0
     archivos_sin_cambios = 0
     archivos_error = 0
 
     for ruta_archivo in archivos_en_origen:
-        print("aaaa",ruta_archivo)
         try:
             # Obtener metadatos actuales del archivo
             stats = os.stat(ruta_archivo)
             fecha_mod_actual = stats.st_mtime
-            peso_actual = stats.st_size
 
-            # Obtener información del archivo desde la DB
-            info_db = obtener_info_archivo(conn, ruta_archivo)
-
-            if info_db:
-                # El archivo ya existe en la DB, verificar si ha cambiado
-                fecha_mod_db = info_db[1]
-                peso_db = info_db[2]
-                hash_db = info_db[3]
-
-                if fecha_mod_actual == fecha_mod_db and peso_actual == peso_db:
-                    # Si fecha y peso son iguales, asumimos que no hay cambios y evitamos calcular hash
-                    logging.debug(f"PROCESO: '{ruta_archivo}' sin cambios detectados por metadatos. Saltando hash.")
-                    archivos_sin_cambios += 1
-                else:
-                    # Fecha o peso han cambiado, calcular hash para verificación definitiva
-                    logging.info(f"PROCESO: '{ruta_archivo}' - Metadatos cambiaron. Calculando hash para verificar.")
-                    hash_actual = generar_hash_archivo(ruta_archivo)
-                    if hash_actual and hash_actual != hash_db:
-                        # El hash es diferente, el archivo ha sido modificado
-                        insertar_o_actualizar_archivo(conn, ruta_archivo, fecha_mod_actual, peso_actual, hash_actual)
-                        archivos_modificados_o_nuevos += 1
-                        logging.info(f"PROCESO: '{ruta_archivo}' modificado. Actualizado en DB.")
-                    elif hash_actual == hash_db:
-                        # Los metadatos cambiaron pero el hash es el mismo (caso raro pero posible)
-                        logging.warning(f"PROCESO: '{ruta_archivo}' - Metadatos cambiaron pero hash es el mismo. (Posible falsa alarma o error de sistema de archivos).")
-                        archivos_sin_cambios += 1
-                    else:
-                        archivos_error += 1
-                        logging.error(f"PROCESO: No se pudo calcular el hash de '{ruta_archivo}'.")
+            if fecha_mod_actual > last_backup_timestamp:
+                # El archivo ha sido modificado o creado desde el último backup
+                logging.info(f"PROCESO: '{ruta_archivo}' modificado/nuevo desde el último backup.")
+                archivos_modificados_o_nuevos += 1
+                # Aquí iría la lógica para COPIAR el archivo si fuera necesario
+                # Por ahora, solo lo identificamos.
             else:
-                # El archivo es nuevo, insertarlo en la DB
-                logging.info(f"PROCESO: '{ruta_archivo}' es nuevo. Calculando hash.")
-                hash_actual = generar_hash_archivo(ruta_archivo)
-                if hash_actual:
-                    insertar_o_actualizar_archivo(conn, ruta_archivo, fecha_mod_actual, peso_actual, hash_actual)
-                    archivos_modificados_o_nuevos += 1
-                    logging.info(f"PROCESO: '{ruta_archivo}' nuevo. Insertado en DB.")
-                else:
-                    archivos_error += 1
-                    logging.error(f"PROCESO: No se pudo calcular el hash de '{ruta_archivo}'.")
+                logging.debug(f"PROCESO: '{ruta_archivo}' sin cambios desde el último backup.")
+                archivos_sin_cambios += 1
 
         except FileNotFoundError:
             logging.warning(f"PROCESO: Archivo '{ruta_archivo}' no encontrado durante el procesamiento (posiblemente eliminado).")
@@ -212,13 +125,15 @@ def ejecutar_backup_incremental(conn, origen_path):
             logging.error(f"PROCESO: Error inesperado al procesar '{ruta_archivo}': {e}")
             archivos_error += 1
             
-    logging.info(f"PROCESO: Backup incremental para '{origen_path}' completado.")
+    end_time = time.time() # Registrar el tiempo de finalización
+    duration = end_time - start_time # Calcular la duración
+    logging.info(f"PROCESO: Backup incremental para '{origen_path}' completado en {duration:.2f} segundos.")
     logging.info(f"PROCESO: Resumen - Nuevos/Modificados: {archivos_modificados_o_nuevos}, Sin cambios: {archivos_sin_cambios}, Errores: {archivos_error}")
 
 
 # --- Bloque Principal de Ejecución ---
 if __name__ == '__main__':
-    logging.info("INICIO: Aplicación de Backup Incremental.")
+    logging.info("INICIO: Aplicación de Backup Incremental (Simplificada).")
 
     # 1. Cargar configuraciones desde config.json
     config_file_path = "config.json"
@@ -262,27 +177,20 @@ if __name__ == '__main__':
         logging.critical(f"ERROR: Error inesperado al cargar la configuración: {e}")
         exit(1)
 
-    # 2. Establecer conexión a la base de datos
-    conn = crear_conexion()
-    if not conn:
-        logging.critical("ERROR: No se pudo establecer la conexión a la base de datos. Saliendo.")
-        exit(1)
-    
-    # 3. Crear la tabla si no existe
-    crear_tabla(conn)
+    # 2. Leer la última fecha de backup antes de iniciar el procesamiento de orígenes
+    last_backup_timestamp_global = leer_ultima_fecha_backup()
+    logging.info(f"Último backup registrado: {time.ctime(last_backup_timestamp_global)}")
 
-    # 4. Iterar sobre cada ubicación de origen en el archivo de configuración
+    # 3. Iterar sobre cada ubicación de origen en el archivo de configuración
     if isinstance(config_ubicaciones, list) and all('origen' in d for d in config_ubicaciones):
         for i, config_entry in enumerate(config_ubicaciones):
             origen_path = config_entry['origen']
             logging.info(f"\n--- Procesando origen [{i+1}/{len(config_ubicaciones)}]: '{origen_path}' ---")
-            ejecutar_backup_incremental(conn, origen_path)
+            ejecutar_backup_incremental(origen_path, last_backup_timestamp_global)
     else:
         logging.critical("ERROR: El formato del archivo config.json no es el esperado. Debe ser una lista de objetos con la clave 'origen'.")
 
-    # 5. Cerrar la conexión a la base de datos al finalizar
-    if conn:
-        conn.close()
-        logging.info(f"Conexión a '{DB_NAME}' cerrada.")
+    # 4. Escribir la fecha actual como la última fecha de backup
+    escribir_ultima_fecha_backup(time.time())
 
-    logging.info("FIN: Aplicación de Backup Incremental finalizada.")
+    logging.info("FIN: Aplicación de Backup Incremental (Simplificada) finalizada.")
