@@ -101,8 +101,8 @@ def crear_zip_incremental(origen_path, destino_path, nombre_zip_base, files_to_z
         logging.info(f"ZIP: No hay archivos para zipear en el origen '{origen_path}'.")
         return
 
-    # Crear el nombre del archivo ZIP con fecha y hora
-    timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Crear el nombre del archivo ZIP con fecha y hora en formato DD-MM-YYYY_hh-mm
+    timestamp_str = datetime.datetime.now().strftime("%d-%m-%Y_%H-%M")
     zip_filename = f"{nombre_zip_base}_{timestamp_str}.zip"
     full_zip_path = os.path.join(destino_path, zip_filename)
 
@@ -234,7 +234,9 @@ if __name__ == '__main__':
 
     # 2. Leer la última fecha de backup antes de iniciar el procesamiento de orígenes
     last_backup_timestamp_global = leer_ultima_fecha_backup()
-    logging.info(f"Último backup registrado: {time.ctime(last_backup_timestamp_global)}")
+    # Formatear la fecha para el log
+    formatted_last_backup_date = datetime.datetime.fromtimestamp(last_backup_timestamp_global).strftime("%d-%m-%Y_%H-%M")
+    logging.info(f"Último backup registrado: {formatted_last_backup_date}")
 
     # 3. Iterar sobre cada ubicación de origen en el archivo de configuración
     if isinstance(config_ubicaciones, list) and all(key in d for d in config_ubicaciones for key in ['origen', 'destino', 'nombre_zip_base']):
