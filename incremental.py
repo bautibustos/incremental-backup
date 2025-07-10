@@ -103,7 +103,7 @@ def crear_zip_incremental(origen_path, destino_path, nombre_zip_base, files_to_z
 
     # Crear el nombre del archivo ZIP con fecha y hora en formato DD-MM-YYYY_hh-mm
     timestamp_str = datetime.datetime.now().strftime("%d-%m-%Y_%H-%M")
-    zip_filename = f"{nombre_zip_base}_{timestamp_str}.zip"
+    zip_filename = f"INC_{nombre_zip_base}_{timestamp_str}.zip"
     full_zip_path = os.path.join(destino_path, zip_filename)
 
     # Asegurarse de que el directorio de destino exista
