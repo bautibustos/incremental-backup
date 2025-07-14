@@ -5,6 +5,10 @@ import time
 import zipfile
 import datetime # Para formatear la fecha y hora en el nombre del zip
 
+# Importa la función para escribir la última fecha de backup del script incremental
+# Esto permite que el backup completo también actualice el punto de referencia para incrementales
+from incremental import escribir_ultima_fecha_backup, LAST_BACKUP_DATE_FILE, DATE_FORMAT
+
 # --- Configuración de Logging ---
 # Configura el logger para guardar mensajes en un archivo y mostrarlos en la consola
 logging.basicConfig(
@@ -16,8 +20,7 @@ logging.basicConfig(
     ]
 )
 
-# --- Formato de fecha y hora deseado para logs y nombres de zip ---
-DATE_FORMAT = "%d-%m-%Y_%H-%M" 
+# DATE_FORMAT ya se importa de incremental.py
 
 def listar_contenido_recursivo(ruta_base):
     """
@@ -54,16 +57,16 @@ def listar_contenido_recursivo(ruta_base):
     logging.info(f"FS: Listado recursivo en '{ruta_base}' completado. Encontrados {len(lista_archivos)} archivos.")
     return lista_archivos, lista_carpetas_vacias
 
-def crear_zip_completo(origen_path, destino_path, nombre_zip_base, files_to_zip, empty_folders_to_add=None):
+def crear_zip_completo(origen_ruta, destino_ruta, nombre_base_zip, files_to_zip, empty_folders_to_add=None):
     """
     Crea un archivo ZIP con todos los archivos y opcionalmente carpetas vacías,
     manteniendo su estructura de directorios relativa al origen.
     El nombre del ZIP incluye la fecha y hora.
 
     Args:
-        origen_path (str): La ruta base de donde provienen los archivos.
-        destino_path (str): La ruta donde se guardará el archivo ZIP.
-        nombre_zip_base (str): El nombre base del archivo ZIP (sin fecha/hora ni extensión).
+        origen_ruta (str): La ruta base de donde provienen los archivos.
+        destino_ruta (str): La ruta donde se guardará el archivo ZIP.
+        nombre_base_zip (str): El nombre base del archivo ZIP (sin fecha/hora ni extensión).
         files_to_zip (list): Una lista de rutas completas de los archivos a incluir en el ZIP.
         empty_folders_to_add (list, optional): Lista de rutas completas de carpetas vacías a añadir.
                                                Por defecto es None.
@@ -74,16 +77,16 @@ def crear_zip_completo(origen_path, destino_path, nombre_zip_base, files_to_zip,
     zip_errors_count = 0
 
     if not files_to_zip and not (empty_folders_to_add and len(empty_folders_to_add) > 0):
-        logging.info(f"ZIP: No hay archivos ni carpetas vacías para zipear en el origen '{origen_path}'.")
+        logging.info(f"ZIP: No hay archivos ni carpetas vacías para zipear en el origen '{origen_ruta}'.")
         return zip_errors_count
 
     # Crear el nombre del archivo ZIP con fecha y hora en formato DD-MM-YYYY_hh-mm
     timestamp_str = datetime.datetime.now().strftime(DATE_FORMAT)
-    zip_filename = f"COM_{nombre_zip_base}_{timestamp_str}.zip"
-    full_zip_path = os.path.join(destino_path, zip_filename)
+    zip_filename = f"COM_{nombre_base_zip}_{timestamp_str}.zip" # Prefijo COM_ para completo
+    full_zip_path = os.path.join(destino_ruta, zip_filename)
 
     # Asegurarse de que el directorio de destino exista
-    os.makedirs(destino_path, exist_ok=True)
+    os.makedirs(destino_ruta, exist_ok=True)
 
     logging.info(f"ZIP: Creando archivo ZIP en '{full_zip_path}' con {len(files_to_zip)} archivos y {len(empty_folders_to_add) if empty_folders_to_add else 0} carpetas vacías.")
 
@@ -93,7 +96,7 @@ def crear_zip_completo(origen_path, destino_path, nombre_zip_base, files_to_zip,
                 try:
                     # Calcular la ruta relativa del archivo dentro del ZIP
                     # Esto mantiene la estructura de carpetas original dentro del ZIP
-                    arcname = os.path.relpath(file_path, origen_path)
+                    arcname = os.path.relpath(file_path, origen_ruta)
                     zipf.write(file_path, arcname)
                     logging.debug(f"ZIP: Añadido archivo '{file_path}' como '{arcname}' al ZIP.")
                 except FileNotFoundError:
@@ -110,7 +113,7 @@ def crear_zip_completo(origen_path, destino_path, nombre_zip_base, files_to_zip,
                 for folder_path in empty_folders_to_add:
                     try:
                         # zipfile.ZipInfo para directorios debe terminar con '/'
-                        arcname_folder = os.path.relpath(folder_path, origen_path) + '/'
+                        arcname_folder = os.path.relpath(folder_path, origen_ruta) + '/'
                         # Crear un objeto ZipInfo para el directorio
                         zip_info = zipfile.ZipInfo(arcname_folder)
                         # Establecer atributos externos para indicar que es un directorio (opcional pero buena práctica)
@@ -134,15 +137,15 @@ def crear_zip_completo(origen_path, destino_path, nombre_zip_base, files_to_zip,
 
 
 # --- Función principal de Backup Completo ---
-def ejecutar_backup_completo(origen_path, destino_path, nombre_zip_base):
+def ejecutar_backup_completo(origen_ruta, destino_ruta, nombre_base_zip):
     """
     Ejecuta el proceso de backup completo para una ruta de origen dada,
     zipeando todos los archivos y carpetas vacías encontrados.
     """
     start_time = time.time() # Registrar el tiempo de inicio
-    logging.info(f"PROCESO: Iniciando backup completo para el origen: '{origen_path}'")
+    logging.info(f"PROCESO: Iniciando backup completo para el origen: '{origen_ruta}'")
     
-    archivos_en_origen, carpetas_vacias_en_origen = listar_contenido_recursivo(origen_path)
+    archivos_en_origen, carpetas_vacias_en_origen = listar_contenido_recursivo(origen_ruta)
     
     # --- DIAGNOSTICO ---
     logging.info(f"DIAGNOSTICO: Archivos encontrados por el listado: {len(archivos_en_origen)}")
@@ -151,7 +154,7 @@ def ejecutar_backup_completo(origen_path, destino_path, nombre_zip_base):
     elif len(archivos_en_origen) >= 10:
         logging.info(f"DIAGNOSTICO: Primeros 10 archivos: {archivos_en_origen[:10]}")
     else:
-        logging.info(f"DIAGNOSTICO: No se encontraron archivos en '{origen_path}'.")
+        logging.info(f"DIAGNOSTICO: No se encontraron archivos en '{origen_ruta}'.")
 
     logging.info(f"DIAGNOSTICO: Carpetas vacías encontradas: {len(carpetas_vacias_en_origen)}")
     if len(carpetas_vacias_en_origen) > 0 and len(carpetas_vacias_en_origen) < 10: # Solo imprimir lista completa si es pequeña
@@ -159,7 +162,7 @@ def ejecutar_backup_completo(origen_path, destino_path, nombre_zip_base):
     elif len(carpetas_vacias_en_origen) >= 10:
         logging.info(f"DIAGNOSTICO: Primeras 10 carpetas vacías: {carpetas_vacias_en_origen[:10]}")
     else:
-        logging.info(f"DIAGNOSTICO: No se encontraron carpetas vacías en '{origen_path}'.")
+        logging.info(f"DIAGNOSTICO: No se encontraron carpetas vacías en '{origen_ruta}'.")
     # --- FIN DIAGNOSTICO ---
 
     files_to_zip = [] # Lista para almacenar todos los archivos
@@ -185,63 +188,114 @@ def ejecutar_backup_completo(origen_path, destino_path, nombre_zip_base):
             
     # Después de procesar todos los archivos, crear el ZIP
     # Se pasa también la lista de carpetas vacías
-    zip_creation_errors = crear_zip_completo(origen_path, destino_path, nombre_zip_base, files_to_zip, carpetas_vacias_en_origen)
+    zip_creation_errors = crear_zip_completo(origen_ruta, destino_ruta, nombre_base_zip, files_to_zip, carpetas_vacias_en_origen)
     
     total_errors = archivos_error_listado + zip_creation_errors
 
     end_time = time.time() # Registrar el tiempo de finalización
     duration = end_time - start_time # Calcular la duración
-    logging.info(f"PROCESO: Backup completo para '{origen_path}' completado en {duration:.2f} segundos.")
+    logging.info(f"PROCESO: Backup completo para '{origen_ruta}' completado en {duration:.2f} segundos.")
     logging.info(f"PROCESO: Resumen - Archivos procesados (para zipear): {archivos_procesados}, Errores totales (listado + zipeo): {total_errors}")
+    return total_errors # Return total errors for the scheduler
 
 
-# --- Bloque Principal de Ejecución ---
-if __name__ == '__main__':
+# --- Función para ejecutar el proceso de backup completo ---
+def run_full_backup_process(config_data):
+    """
+    Ejecuta el proceso de backup completo para todas las ubicaciones de origen
+    definidas en los datos de configuración.
+    """
     logging.info("INICIO: Aplicación de Backup Completo con Zipeo.")
+    logging.debug(f"Configuración recibida en run_full_backup_process: {json.dumps(config_data, indent=2)}") # Diagnóstico
+    
+    total_backup_errors = 0
 
-    # 1. Cargar configuraciones desde config.json
+    # 1. Iterar sobre cada ubicación de origen en el archivo de configuración
+    # Se espera que config_data tenga la clave 'origenes'
+    if isinstance(config_data, dict) and 'origenes' in config_data and isinstance(config_data['origenes'], list):
+        config_ubicaciones = config_data['origenes']
+        # Se esperan las claves 'origen_ruta', 'destino_ruta', 'nombre_base_zip'
+        if all(key in d for d in config_ubicaciones for key in ['origen_ruta', 'destino_ruta', 'nombre_base_zip']):
+            for i, config_entry in enumerate(config_ubicaciones):
+                origen_ruta = config_entry['origen_ruta']
+                destino_ruta = config_entry['destino_ruta']
+                nombre_base_zip = config_entry['nombre_base_zip']
+
+                logging.info(f"\n--- Procesando origen [{i+1}/{len(config_ubicaciones)}]: '{origen_ruta}' ---")
+                errors = ejecutar_backup_completo(origen_ruta, destino_ruta, nombre_base_zip)
+                total_backup_errors += errors
+        else:
+            logging.critical("ERROR: El formato de la clave 'origenes' en config.json no es el esperado. Debe ser una lista de objetos con las claves 'origen_ruta', 'destino_ruta' y 'nombre_base_zip'.")
+            total_backup_errors += 1 # Indicar un error de configuración
+    else:
+        logging.critical("ERROR: El formato del archivo config.json no es el esperado. Debe ser un objeto con la clave 'origenes' (lista).")
+        total_backup_errors += 1 # Indicar un error de configuración
+
+    logging.info(f"FIN: Aplicación de Backup Completo con Zipeo finalizada con {total_backup_errors} errores totales en el proceso de backup.")
+    
+    # --- Modificación para registrar la fecha del backup completo ---
+    # Escribir la fecha actual como la última fecha de backup para el incremental
+    escribir_ultima_fecha_backup(time.time())
+    # --- Fin de la modificación ---
+
+    return total_backup_errors # Return total errors from the backup process
+
+# El bloque principal de ejecución (if __name__ == '__main__':) se mantiene para pruebas directas
+if __name__ == '__main__':
     config_file_path = "config.json"
-    # Definir example_config directamente, ya no se crea el archivo si no existe
-    example_config = [
-        {
-            "origen": os.path.join(os.getcwd(), "test_origin_1"),
-            "destino": os.path.join(os.getcwd(), "backups", "origin_1"),
-            "nombre_zip_base": "full_backup_origen_1"
+    
+    # Define example_config para asegurar un estado ejecutable si config.json falta o es inválido
+    example_config = {
+        "programacion": {
+            "hora_backup": "02:00",
+            "intervalo_verificacion_segundos": 60
         },
-        {
-            "origen": os.path.join(os.getcwd(), "test_origin_2"),
-            "destino": os.path.join(os.getcwd(), "backups", "origin_2"),
-            "nombre_zip_base": "full_backup_origen_2"
-        }
-    ]
-    # Asegurarse de que los directorios de destino existan para el ejemplo
-    for entry in example_config:
-        os.makedirs(entry["destino"], exist_ok=True)
+        "origenes": [
+            {
+                "origen_ruta": os.path.join(os.getcwd(), "test_origen_1"),
+                "destino_ruta": os.path.join(os.getcwd(), "backups", "origen_1"),
+                "nombre_base_zip": "backup_origen_1_completo"
+            },
+            {
+                "origen_ruta": os.path.join(os.getcwd(), "test_origen_2"),
+                "destino_ruta": os.path.join(os.getcwd(), "backups", "origen_2"),
+                "nombre_base_zip": "backup_origen_2_completo"
+            }
+        ]
+    }
 
-    # Ahora se asume que config.json existe y es válido, o se usa example_config
+    # Crear directorios de prueba para el ejemplo si no existen
+    for entry in example_config['origenes']:
+        os.makedirs(entry["destino_ruta"], exist_ok=True)
+        path = entry['origen_ruta']
+        if not os.path.exists(path):
+            os.makedirs(path)
+            logging.info(f"Directorio de prueba '{path}' creado.")
+            with open(os.path.join(path, "example_file_root.txt"), "w") as f:
+                f.write("This is a root example file.")
+            subfolder_path = os.path.join(path, "subfolder_example")
+            os.makedirs(subfolder_path, exist_ok=True)
+            with open(os.path.join(subfolder_path, "sub_file.log"), "w") as f:
+                f.write("Log content in subfolder.")
+            empty_subfolder_path = os.path.join(path, "empty_subfolder")
+            os.makedirs(empty_subfolder_path, exist_ok=True)
+        else:
+            logging.info(f"Directorio de prueba '{path}' ya existe.")
+
+
+    # Intentar cargar config.json, si falla, usar example_config
     try:
         with open(config_file_path, "r") as file:
-            config_ubicaciones = json.load(file)
+            config_data = json.load(file)
         logging.info(f"Configuración cargada desde '{config_file_path}'.")
     except FileNotFoundError:
         logging.warning(f"Archivo de configuración '{config_file_path}' no encontrado. Usando configuración de ejemplo.")
-        config_ubicaciones = example_config # Usar la configuración de ejemplo si el archivo no existe
+        config_data = example_config
     except json.JSONDecodeError as e:
         logging.critical(f"ERROR: Error al parsear '{config_file_path}'. Verifique el formato JSON: {e}. Usando configuración de ejemplo.")
-        config_ubicaciones = example_config # Usar la configuración de ejemplo si el JSON es inválido
+        config_data = example_config
     except Exception as e:
         logging.critical(f"ERROR: Error inesperado al cargar la configuración: {e}. Usando configuración de ejemplo.")
-        config_ubicaciones = example_config # Usar la configuración de ejemplo para otros errores
+        config_data = example_config
 
-
-    # 2. Iterar sobre cada ubicación de origen en el archivo de configuración
-    for i, config_entry in enumerate(config_ubicaciones):
-        origen_path = config_entry['origen']
-        destino_path = config_entry['destino']
-        nombre_zip_base = config_entry['nombre_zip_base']
-
-        logging.info(f"\n--- Procesando origen [{i+1}/{len(config_ubicaciones)}]: '{origen_path}' ---")
-        # Llamada a la función de backup completo
-        ejecutar_backup_completo(origen_path, destino_path, nombre_zip_base)
-
-    logging.info("FIN: Aplicación de Backup Completo con Zipeo finalizada.")
+    run_full_backup_process(config_data)

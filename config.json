@@ -1,7 +1,14 @@
-[
-    {
-        "origen":"//d250isinfs01\\qgis031\\TECNICA_INFRA",
-        "destino":"d:\\",
-        "nombre_zip_base":"Test"
-    }
-]
+{
+    "programacion": {
+        "hora_backup": "02:00",  
+        "intervalo_verificacion_segundos": 120,
+        "modo_prueba": true
+    },
+    "origenes": [
+        {
+            "origen_ruta": "//d250isinfs01\\qgis031\\TECNICA_INFRA",
+            "destino_ruta": "d:\\",
+            "nombre_base_zip": "Test"
+        }
+    ]
+}
