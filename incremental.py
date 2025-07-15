@@ -70,7 +70,7 @@ def listar_contenido_recursivo(ruta_base):
                - lista_archivos (list): Lista de rutas completas de todos los archivos.
                - lista_carpetas_vacias (list): Lista de rutas completas de las carpetas vacías.
     """
-    logging.info(f"FS: Iniciando listado recursivo en '{ruta_base}'.")
+    logging.info(f"FS: Iniciando listado en '{ruta_base}'.")
     lista_archivos = []
     lista_carpetas_vacias = []
 
@@ -79,7 +79,7 @@ def listar_contenido_recursivo(ruta_base):
         return [], []
 
     for dirpath, dirnames, filenames in os.walk(ruta_base):
-        for filename in filenames:
+        for filename in filenames: # os.walk hace un recorrido de todas las carpetas y sub carpetas
             ruta_completa_archivo = os.path.join(dirpath, filename)
             lista_archivos.append(ruta_completa_archivo)
 
@@ -147,11 +147,13 @@ def ejecutar_backup_incremental(origen_ruta, destino_ruta, nombre_base_zip, last
         try:
             # Obtener metadatos actuales del archivo
             stats = os.stat(ruta_archivo)
+            # obtener la fecha de modificacion
             fecha_mod_actual = stats.st_mtime
 
             if fecha_mod_actual > last_backup_timestamp:
                 # El archivo ha sido modificado o creado desde el último backup
-                logging.info(f"PROCESO: '{ruta_archivo}' modificado/nuevo desde el último backup. Añadiendo a la lista de zipeo.")
+                # La linea de abajo es suprimida por mucho spam en log
+                # logging.info(f"PROCESO: '{ruta_archivo}' modificado/nuevo desde el último backup. Añadiendo a la lista de zipeo.")
                 files_to_zip.append(ruta_archivo) # Añadir a la lista para zipear
                 archivos_modificados_o_nuevos += 1
             else:

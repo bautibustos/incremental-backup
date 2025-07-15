@@ -2,7 +2,7 @@
     "programacion": {
         "hora_backup": "02:00",  
         "intervalo_verificacion_segundos": 120,
-        "modo_prueba": true
+        "modo_prueba": false
     },
     "origenes": [
         {
