@@ -180,6 +180,7 @@ def ejecutar_backup_incremental(origen_ruta, destino_ruta, nombre_base_zip, last
     return archivos_error # Retorna el número de errores para el planificador
 
 
+import concurrent.futures
 # --- Función para ejecutar el proceso de backup incremental ---
 def run_incremental_backup_process(config_data):
     """
@@ -190,6 +191,10 @@ def run_incremental_backup_process(config_data):
     logging.debug(f"Configuración recibida en run_incremental_backup_process: {json.dumps(config_data, indent=2)}") # Diagnóstico
 
     total_backup_errors = 0
+
+    programacion_config = config_data.get("programacion", {})
+    max_threads = programacion_config.get("max_threads", 1)  # Default a 1 hilo si no está definido
+    logging.info(f"THREADING: Usando un máximo de {max_threads} hilos para el backup incremental.")
 
     # 1. Leer la última fecha de backup antes de iniciar el procesamiento de orígenes
     last_backup_timestamp_global = leer_ultima_fecha_backup()
@@ -203,14 +208,27 @@ def run_incremental_backup_process(config_data):
         config_ubicaciones = config_data['origenes']
         # Se esperan las claves 'origen_ruta', 'destino_ruta', 'nombre_base_zip'
         if all(key in d for d in config_ubicaciones for key in ['origen_ruta', 'destino_ruta', 'nombre_base_zip']):
-            for i, config_entry in enumerate(config_ubicaciones):
-                origen_ruta = config_entry['origen_ruta']
-                destino_ruta = config_entry['destino_ruta']
-                nombre_base_zip = config_entry['nombre_base_zip']
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
+                future_to_origen = {
+                    executor.submit(
+                        ejecutar_backup_incremental,
+                        config_entry['origen_ruta'],
+                        config_entry['destino_ruta'],
+                        config_entry['nombre_base_zip'],
+                        last_backup_timestamp_global
+                    ): config_entry['origen_ruta']
+                    for config_entry in config_ubicaciones
+                }
 
-                logging.info(f"\n--- Procesando origen [{i+1}/{len(config_ubicaciones)}]: '{origen_ruta}' ---")
-                errors = ejecutar_backup_incremental(origen_ruta, destino_ruta, nombre_base_zip, last_backup_timestamp_global)
-                total_backup_errors += errors
+                for future in concurrent.futures.as_completed(future_to_origen):
+                    origen_ruta = future_to_origen[future]
+                    try:
+                        errors = future.result()
+                        total_backup_errors += errors
+                        logging.info(f"THREADING: Backup incremental para '{origen_ruta}' completado con {errors} errores.")
+                    except Exception as exc:
+                        logging.critical(f"THREADING: Backup incremental para '{origen_ruta}' generó una excepción: {exc}")
+                        total_backup_errors += 1
         else:
             logging.critical("ERROR: El formato de la clave 'origenes' en config.json no es el esperado. Debe ser una lista de objetos con las claves 'origen_ruta', 'destino_ruta' y 'nombre_base_zip'.")
             total_backup_errors += 1 # Indicar un error de configuración
