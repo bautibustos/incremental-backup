@@ -6,9 +6,19 @@
     },
     "origenes": [
         {
+            "origen_ruta": "//d250isinfs01\\Grupos031\\",
+            "destino_ruta": "d:\\031",
+            "nombre_base_zip": "grupos"
+        },
+        {
+            "origen_ruta": "//WS74596\\Administracion",
+            "destino_ruta": "d:\\Adm",
+            "nombre_base_zip": "Adm-Completa"
+        },
+              {
             "origen_ruta": "//d250isinfs01\\qgis031\\TECNICA_INFRA",
-            "destino_ruta": "d:\\",
-            "nombre_base_zip": "Test"
+            "destino_ruta": "d:\\Qgis",
+            "nombre_base_zip": "QGis"
         }
     ]
 }
