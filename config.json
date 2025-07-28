@@ -8,17 +8,29 @@
         {
             "origen_ruta": "//d250isinfs01\\Grupos031\\",
             "destino_ruta": "d:\\031",
-            "nombre_base_zip": "grupos"
+            "nombre_base_zip": "grupos",
+            "tipo_backup":{
+                "completo": false,
+                "incremental": true
+            }
         },
         {
             "origen_ruta": "//WS74596\\Administracion",
             "destino_ruta": "d:\\Adm",
-            "nombre_base_zip": "Adm-Completa"
+            "nombre_base_zip": "Adm-Completa",
+            "tipo_backup":{
+                "completo": false,
+                "incremental": true
+            }
         },
-              {
+        {
             "origen_ruta": "//d250isinfs01\\qgis031\\TECNICA_INFRA",
             "destino_ruta": "d:\\Qgis",
-            "nombre_base_zip": "QGis"
+            "nombre_base_zip": "QGis",
+            "tipo_backup":{
+                "completo": true,
+                "incremental": true
+            }
         }
     ]
 }
