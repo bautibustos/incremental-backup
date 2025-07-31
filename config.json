@@ -7,7 +7,7 @@
     "origenes": [
         {
             "origen_ruta": "//d250isinfs01\\Grupos031\\",
-            "destino_ruta": "d:\\031",
+            "destino_ruta": "e:\\031",
             "nombre_base_zip": "grupos",
             "tipo_backup":{
                 "completo": false,
@@ -16,7 +16,7 @@
         },
         {
             "origen_ruta": "//WS74596\\Administracion",
-            "destino_ruta": "d:\\Adm",
+            "destino_ruta": "e:\\Adm",
             "nombre_base_zip": "Adm-Completa",
             "tipo_backup":{
                 "completo": false,
@@ -24,13 +24,32 @@
             }
         },
         {
-            "origen_ruta": "//d250isinfs01\\qgis031\\TECNICA_INFRA",
-            "destino_ruta": "d:\\Qgis",
+            "origen_ruta": "//10.250.80.38\\qgis031\\TECNICA_INFRA",
+            "destino_ruta": "e:\\Qgis",
             "nombre_base_zip": "QGis",
             "tipo_backup":{
-                "completo": true,
+                "completo": false,
+                "incremental": true
+            }
+        },
+        {
+            "origen_ruta": "//WS74596\\ProtocoloDigital",
+            "destino_ruta": "e:\\ProtocoloDigital",
+            "nombre_base_zip": "ProtocoloDigital",
+            "tipo_backup":{
+                "completo": false,
+                "incremental": true
+            }
+        },
+        {
+            "origen_ruta": "//d250isinfs01\\Grupos2_031\\",
+            "destino_ruta": "e:\\031-2",
+            "nombre_base_zip": "g2-031",
+            "tipo_backup":{
+                "completo": false,
                 "incremental": true
             }
         }
+
     ]
 }
