@@ -108,8 +108,8 @@ def listar_contenido_recursivo(ruta_base):
     lista_archivos = []
     lista_carpetas_vacias = []
 
-    if not os.path.isdir(ruta_base_normalizada):
-        logging.error(f"FS: Error: La ruta '{ruta_base_normalizada}' no es un directorio válido o no existe.")
+    if not os.path.isdir(ruta_base):
+        logging.error(f"FS: Error: La ruta '{ruta_base}' no es un directorio válido o no existe.")
         return [], []
 
     for dirpath, dirnames, filenames in os.walk(ruta_base_normalizada):
@@ -142,13 +142,9 @@ def crear_zip_incremental(origen_ruta, destino_ruta, nombre_base_zip, files_to_z
 
     timestamp_str = datetime.datetime.now().strftime(DATE_FORMAT)
     zip_filename = f"INC_{nombre_base_zip}_{timestamp_str}.zip"
-    
-    # Normalizar la ruta de destino para el archivo ZIP
-    full_zip_path = normalizar_ruta_larga_windows(os.path.join(destino_ruta, zip_filename))
+    full_zip_path = os.path.join(destino_ruta, zip_filename)
 
-    # Normalizar la ruta del directorio de destino antes de crearlo
-    normalized_destino_ruta = normalizar_ruta_larga_windows(destino_ruta)
-    os.makedirs(normalized_destino_ruta, exist_ok=True)
+    os.makedirs(destino_ruta, exist_ok=True)
 
     logging.info(f"ZIP: Creando archivo ZIP en '{full_zip_path}' con {len(files_to_zip)} archivos.")
 
@@ -156,9 +152,7 @@ def crear_zip_incremental(origen_ruta, destino_ruta, nombre_base_zip, files_to_z
         with zipfile.ZipFile(full_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
             for file_path in files_to_zip:
                 try:
-                    # Asegurarse de que el origen_ruta usado para relpath no tenga el prefijo \\?\
-                    arcname = os.path.relpath(file_path, origen_ruta.replace('\\\\?\\', ''))
-                    # zipf.write ya maneja la ruta real del sistema de archivos, que puede tener el prefijo
+                    arcname = os.path.relpath(file_path, origen_ruta)
                     zipf.write(file_path, arcname)
                     logging.debug(f"ZIP: Añadido '{file_path}' como '{arcname}' al ZIP.")
                 except FileNotFoundError:
@@ -194,9 +188,11 @@ def ejecutar_backup_incremental(origen_ruta, destino_ruta, nombre_base_zip, last
             fecha_mod_actual = stats.st_mtime
 
             if fecha_mod_actual > last_backup_timestamp:
+                # logging.info(f"PROCESO: '{ruta_archivo}' modificado/nuevo desde el último backup. Añadiendo a la lista de zipeo.") # Suprimido
                 files_to_zip.append(ruta_archivo)
                 archivos_modificados_o_nuevos += 1
             else:
+                # logging.debug(f"PROCESO: '{ruta_archivo}' sin cambios desde el último backup.") # Suprimido
                 archivos_sin_cambios += 1
 
         except FileNotFoundError:
@@ -218,73 +214,29 @@ def ejecutar_backup_incremental(origen_ruta, destino_ruta, nombre_base_zip, last
 
 
 # --- Función para ejecutar el proceso de backup incremental (con paralelismo) ---
-def run_incremental_backup_process(config_data, global_desired_type): # Mantener global_desired_type
+def run_incremental_backup_process(config_data):
     """
-    Ejecuta el proceso de backup incremental para las ubicaciones de origen
-    definidas en los datos de configuración, utilizando paralelismo y
-    respetando la configuración de tipo_backup por origen.
+    Ejecuta el proceso de backup incremental para todas las ubicaciones de origen
+    definidas en los datos de configuración, utilizando paralelismo.
     """
-    # Configurar el logger para esta ejecución específica
-    timestamp_run = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_filename = f"incremental_backup_{timestamp_run}.log"
-    log_filepath = os.path.join(LOGS_DIR, log_filename)
-    file_handler = setup_dynamic_file_logger(log_filepath)
+    logging.info("INICIO: Aplicación de Backup Incremental (Simplificada con Zipeo - Paralelo).")
+    logging.debug(f"Configuración recibida en run_incremental_backup_process: {json.dumps(config_data, indent=2)}")
 
-    try:
-        logging.info("INICIO: Aplicación de Backup Incremental (Simplificada con Zipeo - Paralelo).")
-        logging.debug(f"Configuración recibida en run_incremental_backup_process: {json.dumps(config_data, indent=2)}")
-
-        total_backup_errors = 0
-        tasks_to_run = []
+    total_backup_errors = 0
 
         last_backup_timestamp_global = leer_ultima_fecha_backup()
         formatted_last_backup_date = datetime.datetime.fromtimestamp(last_backup_timestamp_global).strftime(DATE_FORMAT)
         logging.info(f"Último backup registrado: {formatted_last_backup_date}")
 
-        if isinstance(config_data, dict) and isinstance(config_data.get('origenes'), list):
-            config_ubicaciones = config_data['origenes']
+    if isinstance(config_data, dict) and 'origenes' in config_data and isinstance(config_data['origenes'], list):
+        config_ubicaciones = config_data['origenes']
+        if all(key in d for d in config_ubicaciones for key in ['origen_ruta', 'destino_ruta', 'nombre_base_zip']):
             
-            for entry in config_ubicaciones:
-                # Verificar la configuración de tipo_backup por origen
-                tipo_backup_override = entry.get('tipo_backup')
-                should_run_incremental_for_origin = False
-
-                # Solo si el tipo global deseado es INCREMENTAL, evaluamos el origen
-                if global_desired_type == "incremental":
-                    if tipo_backup_override is not None and isinstance(tipo_backup_override, dict):
-                        if tipo_backup_override.get('incremental') is True:
-                            should_run_incremental_for_origin = True
-                            logging.info(f"PROCESO: Origen '{entry['origen_ruta']}' forzado a INCREMENTAL por configuración específica.")
-                        elif tipo_backup_override.get('incremental') is False:
-                            should_run_incremental_for_origin = False
-                            logging.info(f"PROCESO: Origen '{entry['origen_ruta']}' excluido de INCREMENTAL por configuración específica.")
-                        else: # tipo_backup existe pero 'incremental' no es explícitamente true/false, o valor inválido
-                            should_run_incremental_for_origin = True # Por defecto, si no es explícito, se incluye si el tipo global es incremental
-                            logging.info(f"PROCESO: Origen '{entry['origen_ruta']}' se ejecutará como INCREMENTAL (por regla global, ya que tipo_backup no es explícito).")
-                    else: # No hay configuración de tipo_backup por origen, se aplica la regla global (incremental)
-                        should_run_incremental_for_origin = True
-                        logging.info(f"PROCESO: Origen '{entry['origen_ruta']}' se ejecutará como INCREMENTAL (por regla global).")
-                else: # Si el tipo global deseado NO es INCREMENTAL, este origen no se ejecuta como incremental.
-                    should_run_incremental_for_origin = False
-                    logging.debug(f"PROCESO: Origen '{entry['origen_ruta']}' no se ejecutará como INCREMENTAL (tipo global: {global_desired_type}).")
-
-                if should_run_incremental_for_origin:
-                    # Validar que las claves necesarias existan antes de añadir a la tarea
-                    if all(key in entry for key in ['origen_ruta', 'destino_ruta', 'nombre_base_zip']):
-                        tasks_to_run.append(entry)
-                    else:
-                        logging.error(f"ERROR: Configuración incompleta para el origen: {entry}. Faltan claves 'origen_ruta', 'destino_ruta' o 'nombre_base_zip'.")
-                        total_backup_errors += 1
-        
-            if not tasks_to_run:
-                logging.info("PROCESO: No hay tareas de backup incremental para ejecutar en esta ocasión.")
-                return 0
-
-            logging.info(f"PROCESO: Se iniciarán {len(tasks_to_run)} tareas de backup incremental en paralelo (máx. {MAX_WORKERS} hilos).")
+            logging.info(f"PROCESO: Se iniciarán {len(config_ubicaciones)} tareas de backup incremental en paralelo (máx. {MAX_WORKERS} hilos).")
             with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                 future_to_origin = {
                     executor.submit(ejecutar_backup_incremental, entry['origen_ruta'], entry['destino_ruta'], entry['nombre_base_zip'], last_backup_timestamp_global): entry
-                    for entry in tasks_to_run
+                    for entry in config_ubicaciones
                 }
 
                 for future in concurrent.futures.as_completed(future_to_origin):
@@ -298,14 +250,32 @@ def run_incremental_backup_process(config_data, global_desired_type): # Mantener
                         logging.error(f"PROCESO: La tarea de backup incremental para '{origin_path_for_log}' generó una excepción: {exc}")
                         total_backup_errors += 1
             
-        else: # Este 'else' pertenece al 'if isinstance(config_data, dict) and isinstance(config_data.get('origenes'), list):'
-            logging.critical("ERROR: El formato del archivo config.json no es el esperado. Debe ser un objeto con la clave 'origenes' (lista).")
+        else:
+            logging.critical("ERROR: El formato de la clave 'origenes' en config.json no es el esperado. Debe ser una lista de objetos con las claves 'origen_ruta', 'destino_ruta' y 'nombre_base_zip'.")
             total_backup_errors += 1
+    else:
+        logging.critical("ERROR: El formato del archivo config.json no es el esperado. Debe ser un objeto con la clave 'origenes' (lista).")
+        total_backup_errors += 1
 
         logging.info(f"FIN: Aplicación de Backup Incremental (Simplificada con Zipeo - Paralelo) finalizada con {total_backup_errors} errores totales en el proceso de backup.")
         
         escribir_ultima_fecha_backup(time.time())
 
-        return total_backup_errors
-    finally:
-        teardown_dynamic_file_logger(file_handler) # Asegura que el handler se remueva y cierre
+    return total_backup_errors
+
+# El bloque principal de ejecución (if __name__ == '__main__':) se mantiene para pruebas directas
+if __name__ == '__main__':
+    config_file_path = "config.json"
+    
+    try:
+        with open(config_file_path, "r") as file:
+            config_data = json.load(file)
+        logging.info(f"Configuración cargada desde '{config_file_path}'.")
+    except FileNotFoundError:
+        logging.warning(f"Archivo de configuración '{config_file_path}' no encontrado. Usando configuración de ejemplo.")
+    except json.JSONDecodeError as e:
+        logging.critical(f"ERROR: Error al parsear '{config_file_path}'. Verifique el formato JSON: {e}. Usando configuración de ejemplo.")
+    except Exception as e:
+        logging.critical(f"ERROR: Error inesperado al cargar la configuración: {e}. Usando configuración de ejemplo.")
+
+    run_incremental_backup_process(config_data)

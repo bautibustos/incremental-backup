@@ -39,22 +39,6 @@ def teardown_dynamic_file_logger(handler):
 # --- Configuración de paralelismo ---
 MAX_WORKERS = 3 # Máximo de hilos concurrentes
 
-def normalizar_ruta_larga_windows(ruta):
-    """
-    Normaliza una ruta para Windows añadiendo el prefijo \\?\ si es necesario
-    para soportar rutas largas (más de 260 caracteres).
-    No aplica si la ruta ya es una ruta UNC de red o una ruta extendida.
-    """
-    if os.name == 'nt': # Solo para Windows
-        # Si la ruta ya es una ruta UNC de red (\\server\share) o ya tiene el prefijo extendido,
-        # o si es una ruta relativa, no se modifica.
-        if ruta.startswith('\\\\?\\') or ruta.startswith('\\\\'):
-            return ruta
-        # Para rutas de unidad (C:\...)
-        if len(ruta) > 259 and (ruta[1] == ':' or ruta.startswith('/')): # Considera también rutas con / en Windows
-            return '\\\\?\\' + ruta.replace('/', '\\')
-    return ruta
-
 def listar_contenido_recursivo(ruta_base):
     """
     Lista recursivamente todas las carpetas, subcarpetas y archivos
@@ -68,29 +52,23 @@ def listar_contenido_recursivo(ruta_base):
                - lista_archivos (list): Lista de rutas completas de todos los archivos.
                - lista_carpetas_vacias (list): Lista de rutas completas de las carpetas vacías.
     """
-    # Normalizar la ruta base para manejar rutas largas en Windows
-    ruta_base_normalizada = normalizar_ruta_larga_windows(ruta_base)
-
-    logging.info(f"FS: Iniciando listado recursivo en '{ruta_base_normalizada}'.")
+    logging.info(f"FS: Iniciando listado recursivo en '{ruta_base}'.")
     lista_archivos = []
     lista_carpetas_vacias = []
 
-    # Verificación explícita de la existencia y validez del directorio
-    if not os.path.isdir(ruta_base_normalizada):
-        logging.error(f"FS: Error: La ruta '{ruta_base_normalizada}' no es un directorio válido o no existe. No se puede listar el contenido.")
+    if not os.path.isdir(ruta_base):
+        logging.error(f"FS: Error: La ruta '{ruta_base}' no es un directorio válido o no existe. No se puede listar el contenido.")
         return [], []
 
-    for dirpath, dirnames, filenames in os.walk(ruta_base_normalizada):
+    for dirpath, dirnames, filenames in os.walk(ruta_base):
         for filename in filenames:
             ruta_completa_archivo = os.path.join(dirpath, filename)
-            # Normalizar la ruta completa del archivo también
-            lista_archivos.append(normalizar_ruta_larga_windows(ruta_completa_archivo))
+            lista_archivos.append(ruta_completa_archivo)
 
-        if not dirnames and not filenames and dirpath != ruta_base_normalizada:
-            # Normalizar la ruta de la carpeta vacía también
-            lista_carpetas_vacias.append(normalizar_ruta_larga_windows(dirpath))
+        if not dirnames and not filenames and dirpath != ruta_base:
+            lista_carpetas_vacias.append(dirpath)
     
-    logging.info(f"FS: Listado recursivo en '{ruta_base_normalizada}' completado. Encontrados {len(lista_archivos)} archivos.")
+    logging.info(f"FS: Listado recursivo en '{ruta_base}' completado. Encontrados {len(lista_archivos)} archivos.")
     return lista_archivos, lista_carpetas_vacias
 
 def crear_zip_completo(origen_ruta, destino_ruta, nombre_base_zip, files_to_zip, empty_folders_to_add=None):
@@ -118,13 +96,9 @@ def crear_zip_completo(origen_ruta, destino_ruta, nombre_base_zip, files_to_zip,
 
     timestamp_str = datetime.datetime.now().strftime(DATE_FORMAT)
     zip_filename = f"COM_{nombre_base_zip}_{timestamp_str}.zip"
-    
-    # Normalizar la ruta de destino para el archivo ZIP
-    full_zip_path = normalizar_ruta_larga_windows(os.path.join(destino_ruta, zip_filename))
+    full_zip_path = os.path.join(destino_ruta, zip_filename)
 
-    # Normalizar la ruta del directorio de destino antes de crearlo
-    normalized_destino_ruta = normalizar_ruta_larga_windows(destino_ruta)
-    os.makedirs(normalized_destino_ruta, exist_ok=True)
+    os.makedirs(destino_ruta, exist_ok=True)
 
     logging.info(f"ZIP: Creando archivo ZIP en '{full_zip_path}' con {len(files_to_zip)} archivos y {len(empty_folders_to_add) if empty_folders_to_add else 0} carpetas vacías.")
 
@@ -132,10 +106,7 @@ def crear_zip_completo(origen_ruta, destino_ruta, nombre_base_zip, files_to_zip,
         with zipfile.ZipFile(full_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
             for file_path in files_to_zip:
                 try:
-                    # Asegurarse de que el origen_ruta usado para relpath no tenga el prefijo \\?\
-                    # ya que relpath no lo maneja bien y el arcname no debe tenerlo.
-                    arcname = os.path.relpath(file_path, origen_ruta.replace('\\\\?\\', '')) 
-                    # zipf.write ya maneja la ruta real del sistema de archivos, que puede tener el prefijo
+                    arcname = os.path.relpath(file_path, origen_ruta)
                     zipf.write(file_path, arcname)
                     logging.debug(f"ZIP: Añadido archivo '{file_path}' como '{arcname}' al ZIP.")
                 except FileNotFoundError:
@@ -151,8 +122,7 @@ def crear_zip_completo(origen_ruta, destino_ruta, nombre_base_zip, files_to_zip,
             if empty_folders_to_add:
                 for folder_path in empty_folders_to_add:
                     try:
-                        # Asegurarse de que el origen_ruta usado para relpath no tenga el prefijo \\?\
-                        arcname_folder = os.path.relpath(folder_path, origen_ruta.replace('\\\\?\\', '')) + '/'
+                        arcname_folder = os.path.relpath(folder_path, origen_ruta) + '/'
                         zip_info = zipfile.ZipInfo(arcname_folder)
                         zip_info.external_attr = 0o40775 << 16 
                         zipf.writestr(zip_info, '')
@@ -234,9 +204,8 @@ def ejecutar_backup_completo(origen_ruta, destino_ruta, nombre_base_zip):
 # --- Función para ejecutar el proceso de backup completo (con paralelismo) ---
 def run_full_backup_process(config_data, global_desired_type):
     """
-    Ejecuta el proceso de backup completo para las ubicaciones de origen
-    definidas en los datos de configuración, utilizando paralelismo y
-    respetando la configuración de tipo_backup por origen.
+    Ejecuta el proceso de backup completo para todas las ubicaciones de origen
+    definidas en los datos de configuración, utilizando paralelismo.
     """
     # Configurar el logger para esta ejecución específica
     timestamp_run = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")

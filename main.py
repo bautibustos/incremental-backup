@@ -108,24 +108,21 @@ def main_scheduler_loop(config_file_path="config.json"):
             logging.critical(f"Scheduler: Formato de 'hora_backup' inválido en config.json: '{hora_backup_str}'. Debe ser HH:MM. Saliendo.")
             return
 
-    logging.info(f"Scheduler: Modo de prueba: {'Activado' if modo_prueba else 'Desactivado'}")
-    if not modo_prueba:
-        logging.info(f"Scheduler: Backup programado para las {hora_backup_str} cada día, con tipo determinado por el día de la semana (y por origen).")
-        logging.info(f"Scheduler: Intervalo de verificación: {intervalo_verificacion_segundos} segundos.")
+        logging.info(f"Scheduler: Modo de prueba: {'Activado' if modo_prueba else 'Desactivado'}")
+        if not modo_prueba:
+            logging.info(f"Scheduler: Backup programado para las {hora_backup_str} cada día, con tipo determinado por el día de la semana (y por origen).")
+            logging.info(f"Scheduler: Intervalo de verificación: {intervalo_verificacion_segundos} segundos.")
 
     # --- Lógica del modo de prueba ---
     if modo_prueba:
-        logging.info("Scheduler: Ejecutando en MODO DE PRUEBA: Se realizará un backup incremental seguido de uno completo (según configuración por origen).")
+        logging.info("Scheduler: Ejecutando en MODO DE PRUEBA: Se realizará un backup incremental seguido de uno completo.")
+        logging.info("Scheduler: Iniciando backup incremental en modo de prueba...")
+        run_incremental_backup_process(config_data)
+        logging.info("Scheduler: Backup incremental en modo de prueba completado.")
         
-        # En modo de prueba, llamamos a ambos tipos de backup, y cada uno decidirá qué orígenes procesar.
-        logging.info("Scheduler: Iniciando ejecución de backups incrementales en modo de prueba...")
-        run_incremental_backup_process(config_data, "incremental") # Pasamos "incremental" como tipo global para que se consideren los overrides
-        logging.info("Scheduler: Backups incrementales en modo de prueba completados.")
-        
-        logging.info("Scheduler: Iniciando ejecución de backups completos en modo de prueba...")
-        run_full_backup_process(config_data, "full") # Pasamos "full" como tipo global para que se consideren los overrides
-        logging.info("Scheduler: Backups completos en modo de prueba completados.")
-        
+        logging.info("Scheduler: Iniciando backup completo en modo de prueba...")
+        run_full_backup_process(config_data)
+        logging.info("Scheduler: Backup completo en modo de prueba completado.")
         logging.info("Scheduler: MODO DE PRUEBA finalizado. El script terminará.")
         return # Termina el script después de la ejecución de prueba
 
@@ -190,25 +187,30 @@ def main_scheduler_loop(config_file_path="config.json"):
         current_minute = now.minute
         current_weekday = now.weekday() # Lunes es 0, Domingo es 6
 
-        # Determinar el tipo de backup global según el día de la semana
+        # Determinar el tipo de backup según el día de la semana
         if 0 <= current_weekday <= 4: # Lunes (0) a Viernes (4)
-            global_desired_type = "incremental"
+            desired_backup_type = "incremental"
         else: # Sábado (5) o Domingo (6)
-            global_desired_type = "full"
+            desired_backup_type = "full"
 
         # Verificar si es la hora programada y si no se ha ejecutado hoy
         if current_hour == backup_hour and current_minute >= backup_minute and \
            (last_scheduled_run_date is None or current_date > last_scheduled_run_date):
             
-            logging.info(f"Scheduler: ¡Es hora de ejecutar el backup! ({now.strftime('%H:%M')}) - Día de la semana: {current_weekday} (Tipo global: {global_desired_type.upper()})")
+            logging.info(f"Scheduler: ejecutar el backup ({now.strftime('%H:%M')}) - Día de la semana: {current_weekday} ({desired_backup_type.upper()})")
             
-            # Ejecutar SOLO el proceso de backup que corresponde al tipo global del día
+            # Ejecutar el proceso de backup. Cada función de backup (completo/incremental)
+            # filtrará los orígenes según su tipo_backup específico o el tipo global.
             if global_desired_type == "full":
                 logging.info("Scheduler: Ejecutando procesos de backup (tipo global: COMPLETO).")
                 run_full_backup_process(config_data, global_desired_type) 
+                # Aunque el tipo global sea completo, también llamamos al incremental por si hay orígenes forzados a incremental.
+                run_incremental_backup_process(config_data, global_desired_type)
             elif global_desired_type == "incremental":
                 logging.info("Scheduler: Ejecutando procesos de backup (tipo global: INCREMENTAL).")
                 run_incremental_backup_process(config_data, global_desired_type)
+                # Aunque el tipo global sea incremental, también llamamos al completo por si hay orígenes forzados a completo.
+                run_full_backup_process(config_data, global_desired_type)
             
             # Registrar la fecha de ejecución programada
             write_last_scheduled_run_date(current_date)
