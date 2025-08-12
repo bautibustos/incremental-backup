@@ -6,7 +6,7 @@
     },
     "origenes": [
         {
-            "origen_ruta": "//d250isinfs01\\Grupos031\\",
+            "origen_ruta": "//d250isinfs01\\Grupos031",
             "destino_ruta": "e:\\031",
             "nombre_base_zip": "grupos",
             "tipo_backup":{
@@ -42,7 +42,7 @@
             }
         },
         {
-            "origen_ruta": "//d250isinfs01\\Grupos2_031\\",
+            "origen_ruta": "//d250isinfs01\\Grupos2_031",
             "destino_ruta": "e:\\031-2",
             "nombre_base_zip": "g2-031",
             "tipo_backup":{

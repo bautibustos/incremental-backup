@@ -9,11 +9,18 @@ from completo import run_full_backup_process
 from incremental import run_incremental_backup_process
 
 # --- Configuración de Logging para el Scheduler ---
+LOGS_DIR = "logs"
+os.makedirs(LOGS_DIR, exist_ok=True) # Asegura que la carpeta 'logs' exista
+
+# Nombre del archivo de log para el scheduler (dinámico al inicio del script)
+scheduler_log_filename = datetime.datetime.now().strftime("scheduler_%Y%m%d_%H%M%S.log")
+scheduler_log_filepath = os.path.join(LOGS_DIR, scheduler_log_filename)
+
 logging.basicConfig(
     level=logging.INFO, # Nivel mínimo de mensajes a registrar
     format='%(asctime)s - %(levelname)s - (Scheduler) - %(message)s',
     handlers=[
-        logging.FileHandler("scheduler_log.log", encoding='utf-8'), # Guarda los logs del scheduler
+        logging.FileHandler(scheduler_log_filepath, encoding='utf-8'), # Guarda los logs del scheduler en un archivo dinámico
         logging.StreamHandler() # Muestra los logs en la consola
     ]
 )

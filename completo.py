@@ -12,14 +12,27 @@ import threading # Para obtener el nombre del hilo actual
 from incremental import escribir_ultima_fecha_backup, LAST_BACKUP_DATE_FILE, DATE_FORMAT
 
 # --- Configuración de Logging ---
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - (%(threadName)s) - %(message)s', # Añadido %(threadName)s
-    handlers=[
-        logging.FileHandler("backup_log.log", encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
+# NO usar basicConfig aquí para permitir logs dinámicos por ejecución
+# El logger raíz se configurará dinámicamente en run_full_backup_process
+# o usará la configuración de main.py si no se añade un handler específico.
+
+LOGS_DIR = "logs" # Carpeta para todos los logs
+
+def setup_dynamic_file_logger(log_file_path):
+    """Configura y añade un FileHandler al logger raíz para un archivo de log específico."""
+    os.makedirs(LOGS_DIR, exist_ok=True) # Asegura que la carpeta 'logs' exista
+    file_handler = logging.FileHandler(log_file_path, encoding='utf-8')
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - (%(threadName)s) - %(message)s')
+    file_handler.setFormatter(formatter)
+    
+    # Añadir el handler al logger raíz
+    logging.getLogger().addHandler(file_handler)
+    return file_handler
+
+def teardown_dynamic_file_logger(handler):
+    """Remueve y cierra un FileHandler del logger raíz."""
+    logging.getLogger().removeHandler(handler)
+    handler.close()
 
 # DATE_FORMAT ya se importa de incremental.py
 
@@ -183,7 +196,7 @@ def ejecutar_backup_completo(origen_ruta, destino_ruta, nombre_base_zip):
     if len(carpetas_vacias_en_origen) > 0 and len(carpetas_vacias_en_origen) < 10:
         logging.info(f"DIAGNOSTICO: Lista de carpetas vacías (todas): {carpetas_vacias_en_origen}")
     elif len(carpetas_vacias_en_origen) >= 10:
-        logging.info(f"DIAGNOSTICO: Primeras 10 carpetas vacías: {carpetas_vacias_en_origen[:10]}")
+        logging.info(f"DIAGNOSTICO: Primeros 10 carpetas vacías: {carpetas_vacias_en_origen[:10]}")
     else:
         logging.info(f"DIAGNOSTICO: No se encontraron carpetas vacías en '{origen_ruta}'.")
     # --- FIN DIAGNOSTICO ---
@@ -219,101 +232,91 @@ def ejecutar_backup_completo(origen_ruta, destino_ruta, nombre_base_zip):
 
 
 # --- Función para ejecutar el proceso de backup completo (con paralelismo) ---
-def run_full_backup_process(config_data, global_desired_type): # Añadido global_desired_type
+def run_full_backup_process(config_data, global_desired_type):
     """
     Ejecuta el proceso de backup completo para las ubicaciones de origen
     definidas en los datos de configuración, utilizando paralelismo y
     respetando la configuración de tipo_backup por origen.
     """
-    logging.info("INICIO: Aplicación de Backup Completo con Zipeo (Paralelo).")
-    logging.debug(f"Configuración recibida en run_full_backup_process: {json.dumps(config_data, indent=2)}")
-    
-    total_backup_errors = 0
-    tasks_to_run = []
+    # Configurar el logger para esta ejecución específica
+    timestamp_run = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_filename = f"full_backup_{timestamp_run}.log"
+    log_filepath = os.path.join(LOGS_DIR, log_filename)
+    file_handler = setup_dynamic_file_logger(log_filepath)
 
-    if isinstance(config_data, dict) and 'origenes' in config_data and isinstance(config_data['origenes'], list):
-        config_ubicaciones = config_data['origenes']
-        
-        for entry in config_ubicaciones:
-            # Verificar la configuración de tipo_backup por origen
-            tipo_backup_override = entry.get('tipo_backup')
-            should_run_full = False
-
-            if tipo_backup_override is not None and isinstance(tipo_backup_override, dict):
-                if tipo_backup_override.get('completo') is True:
-                    should_run_full = True
-                    logging.info(f"PROCESO: Origen '{entry['origen_ruta']}' forzado a COMPLETO por configuración específica.")
-                elif tipo_backup_override.get('completo') is False:
-                    should_run_full = False
-                    logging.info(f"PROCESO: Origen '{entry['origen_ruta']}' excluido de COMPLETO por configuración específica.")
-                else: # tipo_backup existe pero 'completo' no es explícitamente true/false, o valor inválido
-                    if global_desired_type == "full":
-                        should_run_full = True
-                        logging.info(f"PROCESO: Origen '{entry['origen_ruta']}' se ejecutará como COMPLETO (por regla global).")
-            else: # No hay configuración de tipo_backup por origen, se aplica la regla global
-                if global_desired_type == "full":
-                    should_run_full = True
-                    logging.info(f"PROCESO: Origen '{entry['origen_ruta']}' se ejecutará como COMPLETO (por regla global).")
-
-            if should_run_full:
-                # Validar que las claves necesarias existan antes de añadir a la tarea
-                if all(key in entry for key in ['origen_ruta', 'destino_ruta', 'nombre_base_zip']):
-                    tasks_to_run.append(entry)
-                else:
-                    logging.error(f"ERROR: Configuración incompleta para el origen: {entry}. Faltan claves 'origen_ruta', 'destino_ruta' o 'nombre_base_zip'.")
-                    total_backup_errors += 1
-        
-        if not tasks_to_run:
-            logging.info("PROCESO: No hay tareas de backup completo para ejecutar en esta ocasión.")
-            return 0
-
-        logging.info(f"PROCESO: Se iniciarán {len(tasks_to_run)} tareas de backup completo en paralelo (máx. {MAX_WORKERS} hilos).")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            future_to_origin = {
-                executor.submit(ejecutar_backup_completo, entry['origen_ruta'], entry['destino_ruta'], entry['nombre_base_zip']): entry
-                for entry in tasks_to_run
-            }
-
-            for future in concurrent.futures.as_completed(future_to_origin):
-                origin_entry = future_to_origin[future]
-                origin_path_for_log = origin_entry.get('origen_ruta', 'N/A')
-                try:
-                    errors = future.result()
-                    total_backup_errors += errors
-                    logging.info(f"PROCESO: Tarea de backup completo para '{origin_path_for_log}' finalizada con {errors} errores.")
-                except Exception as exc:
-                    logging.error(f"PROCESO: La tarea de backup completo para '{origin_path_for_log}' generó una excepción: {exc}")
-                    total_backup_errors += 1
-            
-        # El 'else' original de la validación de 'all(key in d for d in config_ubicaciones...)'
-        # se manejó dentro del bucle 'for entry in config_ubicaciones', por lo que este 'else'
-        # ya no es necesario aquí y se elimina para evitar confusión.
-    else:
-        logging.critical("ERROR: El formato del archivo config.json no es el esperado. Debe ser un objeto con la clave 'origenes' (lista).")
-        total_backup_errors += 1
-
-    logging.info(f"FIN: Aplicación de Backup Completo con Zipeo finalizada con {total_backup_errors} errores totales en el proceso de backup.")
-    
-    escribir_ultima_fecha_backup(time.time())
-
-    return total_backup_errors
-
-# El bloque principal de ejecución (if __name__ == '__main__':) se mantiene para pruebas directas
-if __name__ == '__main__':
-    config_file_path = "config.json"
-    
     try:
-        with open(config_file_path, "r") as file:
-            config_data = json.load(file)
-        logging.info(f"Configuración cargada desde '{config_file_path}'.")
-    except FileNotFoundError:
-        logging.warning(f"Archivo de configuración '{config_file_path}' no encontrado. Usando configuración de ejemplo.")
-    except json.JSONDecodeError as e:
-        logging.critical(f"ERROR: Error al parsear '{config_file_path}'. Verifique el formato JSON: {e}. Usando configuración de ejemplo.")
-    except Exception as e:
-        logging.critical(f"ERROR: Error inesperado al cargar la configuración: {e}. Usando configuración de ejemplo.")
+        logging.info("INICIO: Aplicación de Backup Completo con Zipeo (Paralelo).")
+        logging.debug(f"Configuración recibida en run_full_backup_process: {json.dumps(config_data, indent=2)}")
+        
+        total_backup_errors = 0
+        tasks_to_run = []
 
-    # Cuando se ejecuta directamente completo.py, se asume que se quiere ejecutar un full backup
-    # para todos los orígenes que lo permitan o no tengan override.
-    # Aquí se pasa 'full' como tipo global para que el ejemplo funcione.
-    run_full_backup_process(config_data, "full")
+        if isinstance(config_data, dict) and 'origenes' in config_data and isinstance(config_data['origenes'], list):
+            config_ubicaciones = config_data['origenes']
+            
+            for entry in config_ubicaciones:
+                # Verificar la configuración de tipo_backup por origen
+                tipo_backup_override = entry.get('tipo_backup')
+                should_run_full_for_origin = False
+
+                # Solo si el tipo global deseado es COMPLETO, evaluamos el origen
+                if global_desired_type == "full":
+                    if tipo_backup_override is not None and isinstance(tipo_backup_override, dict):
+                        if tipo_backup_override.get('completo') is True:
+                            should_run_full_for_origin = True
+                            logging.info(f"PROCESO: Origen '{entry['origen_ruta']}' forzado a COMPLETO por configuración específica.")
+                        elif tipo_backup_override.get('completo') is False:
+                            should_run_full_for_origin = False
+                            logging.info(f"PROCESO: Origen '{entry['origen_ruta']}' excluido de COMPLETO por configuración específica.")
+                        else: # tipo_backup existe pero 'completo' no es explícitamente true/false, o valor inválido
+                            should_run_full_for_origin = True # Por defecto, si no es explícito, se incluye si el tipo global es full
+                            logging.info(f"PROCESO: Origen '{entry['origen_ruta']}' se ejecutará como COMPLETO (por regla global, ya que tipo_backup no es explícito).")
+                    else: # No hay configuración de tipo_backup por origen, se aplica la regla global (full)
+                        should_run_full_for_origin = True
+                        logging.info(f"PROCESO: Origen '{entry['origen_ruta']}' se ejecutará como COMPLETO (por regla global).")
+                else: # Si el tipo global deseado NO es COMPLETO, este origen no se ejecuta como completo.
+                    should_run_full_for_origin = False
+                    logging.debug(f"PROCESO: Origen '{entry['origen_ruta']}' no se ejecutará como COMPLETO (tipo global: {global_desired_type}).")
+
+
+                if should_run_full_for_origin:
+                    # Validar que las claves necesarias existan antes de añadir a la tarea
+                    if all(key in entry for key in ['origen_ruta', 'destino_ruta', 'nombre_base_zip']):
+                        tasks_to_run.append(entry)
+                    else:
+                        logging.error(f"ERROR: Configuración incompleta para el origen: {entry}. Faltan claves 'origen_ruta', 'destino_ruta' o 'nombre_base_zip'.")
+                        total_backup_errors += 1
+            
+            if not tasks_to_run:
+                logging.info("PROCESO: No hay tareas de backup completo para ejecutar en esta ocasión.")
+                return 0
+
+            logging.info(f"PROCESO: Se iniciarán {len(tasks_to_run)} tareas de backup completo en paralelo (máx. {MAX_WORKERS} hilos).")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                future_to_origin = {
+                    executor.submit(ejecutar_backup_completo, entry['origen_ruta'], entry['destino_ruta'], entry['nombre_base_zip']): entry
+                    for entry in tasks_to_run
+                }
+
+                for future in concurrent.futures.as_completed(future_to_origin):
+                    origin_entry = future_to_origin[future]
+                    origin_path_for_log = origin_entry.get('origen_ruta', 'N/A')
+                    try:
+                        errors = future.result()
+                        total_backup_errors += errors
+                        logging.info(f"PROCESO: Tarea de backup completo para '{origin_path_for_log}' finalizada con {errors} errores.")
+                    except Exception as exc:
+                        logging.error(f"PROCESO: La tarea de backup completo para '{origin_path_for_log}' generó una excepción: {exc}")
+                        total_backup_errors += 1
+                
+        else:
+            logging.critical("ERROR: El formato del archivo config.json no es el esperado. Debe ser un objeto con la clave 'origenes' (lista).")
+            total_backup_errors += 1
+
+        logging.info(f"FIN: Aplicación de Backup Completo con Zipeo finalizada con {total_backup_errors} errores totales en el proceso de backup.")
+        
+        escribir_ultima_fecha_backup(time.time())
+
+        return total_backup_errors
+    finally:
+        teardown_dynamic_file_logger(file_handler) # Asegura que el handler se remueva y cierre
