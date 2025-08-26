@@ -32,23 +32,18 @@ LAST_SCHEDULED_RUN_DATE_FILE = "last_backup_scheduled_date.txt"
 def read_last_scheduled_run_date():
     """Lee la última fecha registrada en que el backup fue programado con éxito."""
     if os.path.exists(LAST_SCHEDULED_RUN_DATE_FILE):
-        try:
-            with open(LAST_SCHEDULED_RUN_DATE_FILE, "r") as f:
-                date_str = f.read().strip()
-                if date_str:
-                    return datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
-        except Exception as e:
-            logging.error(f"Scheduler: Error al leer la última fecha de ejecución programada de '{LAST_SCHEDULED_RUN_DATE_FILE}': {e}")
+        with open(LAST_SCHEDULED_RUN_DATE_FILE, "r") as f:
+            date_str = f.read().strip()
+            if date_str:
+                return datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
     return None
 
 def write_last_scheduled_run_date(date_obj):
     """Escribe la fecha actual para registrar cuándo se programó el backup con éxito."""
-    try:
-        with open(LAST_SCHEDULED_RUN_DATE_FILE, "w") as f:
-            f.write(str(date_obj.strftime("%Y-%m-%d")))
-        logging.info(f"Scheduler: Última fecha de ejecución programada registrada: {date_obj.strftime('%Y-%m-%d')}")
-    except Exception as e:
-        logging.error(f"Scheduler: Error al escribir la última fecha de ejecución programada en '{LAST_SCHEDULED_RUN_DATE_FILE}': {e}")
+
+    with open(LAST_SCHEDULED_RUN_DATE_FILE, "w") as f:
+        f.write(str(date_obj.strftime("%Y-%m-%d")))
+    logging.info(f"Scheduler: Última fecha de ejecución programada registrada: {date_obj.strftime('%Y-%m-%d')}")
 
 def load_config(config_file_path):
     """Carga la configuración desde el archivo JSON."""
@@ -60,12 +55,7 @@ def load_config(config_file_path):
     except FileNotFoundError:
         logging.critical(f"Scheduler: Archivo de configuración '{config_file_path}' no encontrado. Asegúrese de que exista. Saliendo.")
         raise
-    except json.JSONDecodeError as e:
-        logging.critical(f"Scheduler: Error al parsear '{config_file_path}'. Verifique el formato JSON: {e}. Saliendo.")
-        raise
-    except Exception as e:
-        logging.critical(f"Scheduler: Error inesperado al cargar la configuración: {e}. Saliendo.")
-        raise
+
 
 def main_scheduler_loop(config_file_path="config.json"):
     """
@@ -78,12 +68,8 @@ def main_scheduler_loop(config_file_path="config.json"):
     last_config_mod_time = None # Para rastrear el tiempo de última modificación del config.json
 
     # Cargar la configuración inicial y obtener su tiempo de última modificación
-    try:
-        config_data = load_config(config_file_path)
-        last_config_mod_time = os.path.getmtime(config_file_path)
-    except Exception:
-        # Si la carga inicial falla, el script no puede continuar
-        return
+    config_data = load_config(config_file_path)
+    last_config_mod_time = os.path.getmtime(config_file_path)
 
     # Extraer la configuración de programación
     schedule_config = config_data.get("programacion")
@@ -200,7 +186,7 @@ def main_scheduler_loop(config_file_path="config.json"):
         if current_hour == backup_hour and current_minute >= backup_minute and \
            (last_scheduled_run_date is None or current_date > last_scheduled_run_date):
             
-            logging.info(f"Scheduler: ¡Es hora de ejecutar el backup! ({now.strftime('%H:%M')}) - Día de la semana: {current_weekday} (Tipo global: {global_desired_type.upper()})")
+            logging.info(f"Scheduler: Inicio proceso de backup ({now.strftime('%H:%M')}) - Día de la semana: {current_weekday} (Tipo global: {global_desired_type.upper()})")
             
             # Ejecutar SOLO el proceso de backup que corresponde al tipo global del día
             if global_desired_type == "full":
