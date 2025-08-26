@@ -29,6 +29,10 @@ logging.basicConfig(
 # Esto es para asegurar que el backup solo se ejecute una vez al día a la hora programada.
 LAST_SCHEDULED_RUN_DATE_FILE = "last_backup_scheduled_date.txt"
 
+# --- Constantes para la verificación de red ---
+MAX_NETWORK_CHECK_ATTEMPTS = 3
+RETRY_DELAY_SECONDS = 300 # 5 minutos
+
 def read_last_scheduled_run_date():
     """Lee la última fecha registrada en que el backup fue programado con éxito."""
     if os.path.exists(LAST_SCHEDULED_RUN_DATE_FILE):
@@ -67,6 +71,46 @@ def load_config(config_file_path):
         logging.critical(f"Scheduler: Error inesperado al cargar la configuración: {e}. Saliendo.")
         raise
 
+def check_network_paths_availability(origenes_config, max_attempts, retry_delay):
+    """
+    Verifica la disponibilidad de las rutas de red configuradas.
+    Intenta MAX_NETWORK_CHECK_ATTEMPTS veces con RETRY_DELAY_SECONDS entre intentos.
+    Retorna una lista de diccionarios de origen que son actualmente accesibles.
+    """
+    accessible_origenes = []
+    
+    logging.info(f"Scheduler: Iniciando verificación de accesibilidad de ubicaciones de red (hasta {max_attempts} intentos, {retry_delay}s de espera por intento).")
+
+    for origin_entry in origenes_config:
+        origen_ruta = origin_entry.get('origen_ruta')
+        if not origen_ruta:
+            logging.error(f"Scheduler: Origen sin 'origen_ruta' definido: {origin_entry}. Saltando.")
+            continue
+
+        is_accessible = False
+        for attempt in range(1, max_attempts + 1):
+            logging.info(f"Scheduler: Intentando ({attempt}/{max_attempts}) verificar accesibilidad de '{origen_ruta}'...")
+            try:
+                if os.path.isdir(origen_ruta):
+                    logging.info(f"Scheduler: Ubicación de red '{origen_ruta}' ACCESIBLE.")
+                    is_accessible = True
+                    break
+                else:
+                    logging.warning(f"Scheduler: Ubicación de red '{origen_ruta}' NO ACCESIBLE o no es un directorio válido en el intento {attempt}.")
+            except Exception as e:
+                logging.warning(f"Scheduler: Error al verificar accesibilidad de '{origen_ruta}' (intento {attempt}): {e}")
+            
+            if attempt < max_attempts:
+                time.sleep(retry_delay) # Esperar antes del próximo intento
+
+        if is_accessible:
+            accessible_origenes.append(origin_entry)
+        else:
+            logging.error(f"Scheduler: Ubicación de red '{origen_ruta}' NO ACCESIBLE después de {max_attempts} intentos. Se SUSPENDERÁ el backup para este origen hoy.")
+            
+    return accessible_origenes
+
+
 def main_scheduler_loop(config_file_path="config.json"):
     """
     Bucle principal del planificador que verifica la hora y ejecuta el backup.
@@ -92,7 +136,8 @@ def main_scheduler_loop(config_file_path="config.json"):
         return
     
     hora_backup_str = schedule_config.get("hora_backup")
-    intervalo_verificacion_segundos = schedule_config.get("intervalo_verificacion_segundos", 60)
+    # Ajustar el intervalo de verificación a 30 minutos por defecto si no está definido o es menor.
+    intervalo_verificacion_segundos = max(schedule_config.get("intervalo_verificacion_segundos", 1800), 1800) 
     modo_prueba = schedule_config.get("modo_prueba", False)
     
     if not hora_backup_str and not modo_prueba:
@@ -111,19 +156,31 @@ def main_scheduler_loop(config_file_path="config.json"):
     logging.info(f"Scheduler: Modo de prueba: {'Activado' if modo_prueba else 'Desactivado'}")
     if not modo_prueba:
         logging.info(f"Scheduler: Backup programado para las {hora_backup_str} cada día, con tipo determinado por el día de la semana (y por origen).")
-        logging.info(f"Scheduler: Intervalo de verificación: {intervalo_verificacion_segundos} segundos.")
+        logging.info(f"Scheduler: Intervalo de verificación: {intervalo_verificacion_segundos} segundos (min 30 minutos).")
 
     # --- Lógica del modo de prueba ---
     if modo_prueba:
         logging.info("Scheduler: Ejecutando en MODO DE PRUEBA: Se realizará un backup incremental seguido de uno completo (según configuración por origen).")
         
         # En modo de prueba, llamamos a ambos tipos de backup, y cada uno decidirá qué orígenes procesar.
+        # Primero, verificamos la accesibilidad de las rutas en modo de prueba
+        accessible_origenes_test = check_network_paths_availability(
+            config_data.get('origenes', []), MAX_NETWORK_CHECK_ATTEMPTS, RETRY_DELAY_SECONDS
+        )
+        if not accessible_origenes_test:
+            logging.warning("Scheduler: En MODO DE PRUEBA, no hay ubicaciones de origen accesibles. Finalizando la prueba.")
+            return # Termina el script si no hay orígenes accesibles en modo de prueba
+
+        # Crear una copia de config_data y actualizar los orígenes para la ejecución de prueba
+        config_data_for_test = config_data.copy()
+        config_data_for_test['origenes'] = accessible_origenes_test
+
         logging.info("Scheduler: Iniciando ejecución de backups incrementales en modo de prueba...")
-        run_incremental_backup_process(config_data, "incremental") # Pasamos "incremental" como tipo global para que se consideren los overrides
+        run_incremental_backup_process(config_data_for_test, "incremental") # Pasamos "incremental" como tipo global para que se consideren los overrides
         logging.info("Scheduler: Backups incrementales en modo de prueba completados.")
         
         logging.info("Scheduler: Iniciando ejecución de backups completos en modo de prueba...")
-        run_full_backup_process(config_data, "full") # Pasamos "full" como tipo global para que se consideren los overrides
+        run_full_backup_process(config_data_for_test, "full") # Pasamos "full" como tipo global para que se consideren los overrides
         logging.info("Scheduler: Backups completos en modo de prueba completados.")
         
         logging.info("Scheduler: MODO DE PRUEBA finalizado. El script terminará.")
@@ -148,7 +205,8 @@ def main_scheduler_loop(config_file_path="config.json"):
                 schedule_config = config_data.get("programacion")
                 if schedule_config:
                     hora_backup_str = schedule_config.get("hora_backup")
-                    intervalo_verificacion_segundos = schedule_config.get("intervalo_verificacion_segundos", 60)
+                    # Volver a aplicar el mínimo de 30 minutos
+                    intervalo_verificacion_segundos = max(schedule_config.get("intervalo_verificacion_segundos", 1800), 1800) 
                     modo_prueba = schedule_config.get("modo_prueba", False) # Recargar modo_prueba también
 
                     if not hora_backup_str and not modo_prueba:
@@ -166,12 +224,24 @@ def main_scheduler_loop(config_file_path="config.json"):
                 # Si el modo de prueba se activó dinámicamente, salir del bucle del temporizador
                 if modo_prueba:
                     logging.info("Scheduler: MODO DE PRUEBA activado dinámicamente. Ejecutando y terminando.")
+                    
+                    # Ejecutar en modo de prueba después de una recarga dinámica
+                    accessible_origenes_test = check_network_paths_availability(
+                        config_data.get('origenes', []), MAX_NETWORK_CHECK_ATTEMPTS, RETRY_DELAY_SECONDS
+                    )
+                    if not accessible_origenes_test:
+                        logging.warning("Scheduler: En MODO DE PRUEBA (dinámico), no hay ubicaciones de origen accesibles. Finalizando la prueba.")
+                        return
+
+                    config_data_for_test = config_data.copy()
+                    config_data_for_test['origenes'] = accessible_origenes_test
+
                     logging.info("Scheduler: Iniciando ejecución de backups incrementales en modo de prueba...")
-                    run_incremental_backup_process(config_data, "incremental")
+                    run_incremental_backup_process(config_data_for_test, "incremental")
                     logging.info("Scheduler: Backups incrementales en modo de prueba completados.")
                     
                     logging.info("Scheduler: Iniciando ejecución de backups completos en modo de prueba...")
-                    run_full_backup_process(config_data, "full")
+                    run_full_backup_process(config_data_for_test, "full")
                     logging.info("Scheduler: Backups completos en modo de prueba completados.")
                     logging.info("Scheduler: MODO DE PRUEBA finalizado. El script terminará.")
                     return # Termina el script
@@ -202,19 +272,36 @@ def main_scheduler_loop(config_file_path="config.json"):
             
             logging.info(f"Scheduler: ¡Es hora de ejecutar el backup! ({now.strftime('%H:%M')}) - Día de la semana: {current_weekday} (Tipo global: {global_desired_type.upper()})")
             
-            # Ejecutar SOLO el proceso de backup que corresponde al tipo global del día
-            if global_desired_type == "full":
-                logging.info("Scheduler: Ejecutando procesos de backup (tipo global: COMPLETO).")
-                run_full_backup_process(config_data, global_desired_type) 
-            elif global_desired_type == "incremental":
-                logging.info("Scheduler: Ejecutando procesos de backup (tipo global: INCREMENTAL).")
-                run_incremental_backup_process(config_data, global_desired_type)
-            
-            # Registrar la fecha de ejecución programada
-            write_last_scheduled_run_date(current_date)
-            last_scheduled_run_date = current_date # Actualizar la variable en memoria
-            
-            logging.info("Scheduler: Backup completado. Esperando hasta el próximo día programado.")
+            # --- REALIZAR LA VERIFICACIÓN DE RED ANTES DE PROCEDER CON EL BACKUP ---
+            accessible_origenes = check_network_paths_availability(
+                config_data.get('origenes', []), MAX_NETWORK_CHECK_ATTEMPTS, RETRY_DELAY_SECONDS
+            )
+
+            if not accessible_origenes:
+                logging.critical("Scheduler: No hay ubicaciones de origen accesibles después de múltiples intentos. Se SUSPENDE el backup para hoy. Se reintentará al día siguiente.")
+                # Registrar la fecha de ejecución programada como si hubiera ocurrido, para evitar reintentos hoy.
+                # Esto asume que un "fallo total de red" cuenta como la ejecución del día.
+                write_last_scheduled_run_date(current_date) 
+                last_scheduled_run_date = current_date # Actualizar la variable en memoria
+                # No ejecutar backups, simplemente esperar al próximo ciclo.
+            else:
+                # Crear una copia de config_data y reemplazar la lista de orígenes con solo los accesibles
+                config_data_for_run = config_data.copy()
+                config_data_for_run['origenes'] = accessible_origenes
+
+                # Ejecutar SOLO el proceso de backup que corresponde al tipo global del día
+                if global_desired_type == "full":
+                    logging.info("Scheduler: Ejecutando procesos de backup (tipo global: COMPLETO).")
+                    run_full_backup_process(config_data_for_run, global_desired_type) 
+                elif global_desired_type == "incremental":
+                    logging.info("Scheduler: Ejecutando procesos de backup (tipo global: INCREMENTAL).")
+                    run_incremental_backup_process(config_data_for_run, global_desired_type)
+                
+                # Registrar la fecha de ejecución programada SOLO si el backup se intentó (aunque falle internamente)
+                write_last_scheduled_run_date(current_date)
+                last_scheduled_run_date = current_date # Actualizar la variable en memoria
+                
+                logging.info("Scheduler: Backup completado. Esperando hasta el próximo día programado.")
         else:
             logging.debug(f"Scheduler: Esperando la hora programada. Actual: {now.strftime('%H:%M')}, Programado: {hora_backup_str}. Última ejecución programada: {last_scheduled_run_date}")
 

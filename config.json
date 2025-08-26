@@ -2,7 +2,7 @@
     "programacion": {
         "hora_backup": "02:00",  
         "intervalo_verificacion_segundos": 120,
-        "modo_prueba": false
+        "modo_prueba": true
     },
     "origenes": [
         {
@@ -24,7 +24,7 @@
             }
         },
         {
-            "origen_ruta": "//10.250.80.38\\qgis031\\TECNICA_INFRA",
+            "origen_ruta": "//d250isinfs01\\qgis031",
             "destino_ruta": "e:\\Qgis",
             "nombre_base_zip": "QGis",
             "tipo_backup":{
